@@ -1,0 +1,866 @@
+# =====================================================
+# PATIENT ADMISSION MANAGEMENT SYSTEM
+# FRONTEND + BACKEND + DATABASE
+# =====================================================
+
+!pip -q install flask
+
+import sqlite3
+import threading
+from flask import Flask, request, jsonify, render_template_string
+from werkzeug.serving import make_server
+from google.colab.output import eval_js
+
+# =====================================================
+# DATABASE
+# =====================================================
+
+DB_NAME = "patients.db"
+
+def get_db():
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+conn = get_db()
+
+conn.execute("""
+CREATE TABLE IF NOT EXISTS patients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    age INTEGER,
+    gender TEXT,
+    ward TEXT,
+    department TEXT,
+    doctor TEXT,
+    admission_date TEXT,
+    status TEXT DEFAULT 'Admitted'
+)
+""")
+
+conn.commit()
+conn.close()
+
+# =====================================================
+# FLASK APPLICATION
+# =====================================================
+
+app = Flask(__name__)
+
+DEPARTMENTS = [
+    "Cardiology", "Neurology", "Orthopedics",
+    "Pediatrics", "General Medicine"
+]
+
+DOCTORS = ["Dr. Ahmed", "Dr. John", "Dr. Sarah"]
+
+WARDS = ["General Ward", "ICU", "Private Ward"]
+
+GENDERS = ["Male", "Female", "Other"]
+
+# =====================================================
+# FRONTEND
+# =====================================================
+
+HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+<title>Patient Admission Management</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f3f6fb;
+    color: #263445;
+}
+
+header {
+    background: #123b63;
+    color: white;
+    padding: 22px 30px;
+}
+
+header h2 {
+    margin: 0;
+}
+
+.container {
+    padding: 25px;
+    max-width: 1400px;
+    margin: auto;
+}
+
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 18px;
+    margin-bottom: 25px;
+}
+
+.card {
+    background: white;
+    padding: 22px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px #00000012;
+}
+
+.card h3 {
+    color: #65758b;
+    font-size: 15px;
+}
+
+.card h1 {
+    color: #123b63;
+    margin-bottom: 0;
+}
+
+.section {
+    background: white;
+    padding: 25px;
+    border-radius: 12px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 8px #00000012;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+input, select {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ccd5df;
+    border-radius: 7px;
+    margin-top: 7px;
+}
+
+label {
+    font-weight: bold;
+    font-size: 14px;
+}
+
+button {
+    padding: 11px 17px;
+    border: none;
+    border-radius: 7px;
+    cursor: pointer;
+    margin-top: 15px;
+    color: white;
+    background: #1769aa;
+}
+
+button:hover {
+    opacity: 0.85;
+}
+
+.danger {
+    background: #dc3545;
+}
+
+.edit {
+    background: #e09b20;
+}
+
+.search {
+    max-width: 350px;
+    margin-bottom: 15px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 850px;
+}
+
+th, td {
+    padding: 13px;
+    text-align: left;
+    border-bottom: 1px solid #e5eaf0;
+}
+
+th {
+    background: #edf3f9;
+}
+
+.table-container {
+    overflow-x: auto;
+}
+
+.badge {
+    background: #d8f5e3;
+    color: #168344;
+    padding: 6px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+}
+
+.discharged {
+    background: #ffe1e1;
+    color: #c0392b;
+}
+
+#message {
+    margin-top: 15px;
+    font-weight: bold;
+}
+
+</style>
+</head>
+
+<body>
+
+<header>
+<h2>🏥 Patient Admission Management System</h2>
+<p>Hospital Administration Dashboard</p>
+</header>
+
+<div class="container">
+
+<!-- DASHBOARD -->
+
+<div class="cards">
+
+<div class="card">
+<h3>Total Patients</h3>
+<h1 id="total">0</h1>
+</div>
+
+<div class="card">
+<h3>Admitted Patients</h3>
+<h1 id="admitted">0</h1>
+</div>
+
+<div class="card">
+<h3>Discharged Patients</h3>
+<h1 id="discharged">0</h1>
+</div>
+
+</div>
+
+<!-- REGISTRATION -->
+
+<div class="section">
+
+<h2 id="formTitle">Register New Patient</h2>
+
+<form id="patientForm">
+
+<div class="form-grid">
+
+<div>
+<label>Patient Name</label>
+<input type="text" id="name" required>
+</div>
+
+<div>
+<label>Age</label>
+<input type="number" id="age" min="0" max="120" required>
+</div>
+
+<div>
+<label>Gender</label>
+<select id="gender" required>
+<option value="">Select Gender</option>
+</select>
+</div>
+
+<div>
+<label>Ward</label>
+<select id="ward" required>
+<option value="">Select Ward</option>
+</select>
+</div>
+
+<div>
+<label>Department</label>
+<select id="department" required>
+<option value="">Select Department</option>
+</select>
+</div>
+
+<div>
+<label>Doctor</label>
+<select id="doctor" required>
+<option value="">Select Doctor</option>
+</select>
+</div>
+
+<div>
+<label>Admission Date</label>
+<input type="date" id="admission_date" required>
+</div>
+
+</div>
+
+<button type="submit" id="submitBtn">
+Register Patient
+</button>
+
+<button type="button" id="cancelBtn"
+style="display:none;background:#777"
+onclick="resetForm()">
+Cancel Edit
+</button>
+
+<div id="message"></div>
+
+</form>
+
+</div>
+
+<!-- PATIENT RECORDS -->
+
+<div class="section">
+
+<h2>Patient Records</h2>
+
+<input
+type="text"
+class="search"
+id="search"
+placeholder="Search patient name..."
+oninput="loadPatients()"
+>
+
+<div class="table-container">
+
+<table>
+
+<thead>
+<tr>
+<th>ID</th>
+<th>Name</th>
+<th>Age</th>
+<th>Gender</th>
+<th>Ward</th>
+<th>Department</th>
+<th>Doctor</th>
+<th>Date</th>
+<th>Status</th>
+<th>Actions</th>
+</tr>
+</thead>
+
+<tbody id="patientTable"></tbody>
+
+</table>
+
+</div>
+</div>
+</div>
+
+<script>
+
+const API = "/api/patients";
+
+let patients = [];
+let editingId = null;
+
+// ======================================
+// LOAD OPTIONS
+// ======================================
+
+async function loadOptions() {
+
+    const response = await fetch("/api/options");
+    const data = await response.json();
+
+    ["gender", "ward", "department", "doctor"].forEach(id => {
+
+        const select = document.getElementById(id);
+        const key = id === "gender" ? "genders" :
+                    id === "ward" ? "wards" :
+                    id === "department" ? "departments" :
+                    "doctors";
+
+        data[key].forEach(value => {
+
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = value;
+            select.appendChild(option);
+
+        });
+
+    });
+
+}
+
+// ======================================
+// LOAD PATIENTS
+// ======================================
+
+async function loadPatients() {
+
+    const response = await fetch(API);
+    patients = await response.json();
+
+    const search = document.getElementById("search")
+        .value.toLowerCase();
+
+    const filtered = patients.filter(p =>
+        p.name.toLowerCase().includes(search)
+    );
+
+    document.getElementById("total").textContent = 
+        patients.length;
+
+    document.getElementById("admitted").textContent = 
+        patients.filter(p => p.status === "Admitted").length;
+
+    document.getElementById("discharged").textContent = 
+        patients.filter(p => p.status === "Discharged").length;
+
+    const table = document.getElementById("patientTable");
+
+    table.innerHTML = "";
+
+    filtered.forEach(p => {
+
+        const row = document.createElement("tr");
+
+        const values = [
+            p.id, p.name, p.age, p.gender, p.ward,
+            p.department, p.doctor, p.admission_date
+        ];
+
+        values.forEach(value => {
+            const td = document.createElement("td");
+            td.textContent = value ?? "";
+            row.appendChild(td);
+        });
+
+        const status = document.createElement("td");
+        const badge = document.createElement("span");
+
+        badge.className = p.status === "Admitted"
+            ? "badge"
+            : "badge discharged";
+
+        badge.textContent = p.status;
+        status.appendChild(badge);
+        row.appendChild(status);
+
+        const actions = document.createElement("td");
+
+        const editBtn = document.createElement("button");
+        editBtn.className = "edit";
+        editBtn.textContent = "Edit";
+        editBtn.onclick = () => editPatient(p.id);
+
+        actions.appendChild(editBtn);
+
+        if (p.status === "Admitted") {
+
+            const dischargeBtn = document.createElement("button");
+            dischargeBtn.className = "danger";
+            dischargeBtn.textContent = "Discharge";
+            dischargeBtn.onclick = () => dischargePatient(p.id);
+
+            actions.appendChild(dischargeBtn);
+        }
+
+        row.appendChild(actions);
+        table.appendChild(row);
+
+    });
+
+}
+
+// ======================================
+// REGISTER / UPDATE PATIENT
+// ======================================
+
+document.getElementById("patientForm")
+.addEventListener("submit", async function(e) {
+
+    e.preventDefault();
+
+    const data = {
+
+        name: document.getElementById("name").value.trim(),
+        age: Number(document.getElementById("age").value),
+        gender: document.getElementById("gender").value,
+        ward: document.getElementById("ward").value,
+        department: document.getElementById("department").value,
+        doctor: document.getElementById("doctor").value,
+        admission_date: document.getElementById("admission_date").value
+
+    };
+
+    if (!data.name || !data.admission_date) {
+        alert("Please complete all required fields.");
+        return;
+    }
+
+    const url = editingId
+        ? `${API}/${editingId}`
+        : API;
+
+    const method = editingId ? "PUT" : "POST";
+
+    try {
+
+        const response = await fetch(url, {
+            method: method,
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.error || "Operation failed");
+        }
+
+        document.getElementById("message").textContent = 
+            result.message;
+
+        resetForm();
+        loadPatients();
+
+    } catch(error) {
+
+        alert(error.message);
+
+    }
+
+});
+
+// ======================================
+// EDIT PATIENT
+// ======================================
+
+function editPatient(id) {
+
+    const p = patients.find(x => x.id === id);
+
+    if (!p) return;
+
+    editingId = id;
+
+    document.getElementById("name").value = p.name;
+    document.getElementById("age").value = p.age;
+    document.getElementById("gender").value = p.gender;
+    document.getElementById("ward").value = p.ward;
+    document.getElementById("department").value = p.department;
+    document.getElementById("doctor").value = p.doctor;
+    document.getElementById("admission_date").value = 
+        p.admission_date;
+
+    document.getElementById("formTitle").textContent = 
+        "Update Patient Details";
+
+    document.getElementById("submitBtn").textContent = 
+        "Update Patient";
+
+    document.getElementById("cancelBtn").style.display = 
+        "inline-block";
+
+    window.scrollTo({top: 0, behavior: "smooth"});
+
+}
+
+// ======================================
+// RESET FORM
+// ======================================
+
+function resetForm() {
+
+    document.getElementById("patientForm").reset();
+
+    editingId = null;
+
+    document.getElementById("formTitle").textContent = 
+        "Register New Patient";
+
+    document.getElementById("submitBtn").textContent = 
+        "Register Patient";
+
+    document.getElementById("cancelBtn").style.display = 
+        "none";
+
+}
+
+// ======================================
+// DISCHARGE PATIENT
+// ======================================
+
+async function dischargePatient(id) {
+
+    if (!confirm("Are you sure you want to discharge this patient?"))
+        return;
+
+    const response = await fetch(
+        `${API}/${id}/discharge`,
+        {method: "PATCH"}
+    );
+
+    const result = await response.json();
+
+    alert(result.message || result.error);
+
+    loadPatients();
+
+}
+
+// ======================================
+// INITIALIZE
+// ======================================
+
+loadOptions().then(loadPatients);
+
+</script>
+
+</body>
+</html>
+"""
+
+# ==========================================
+# HOME PAGE
+# ==========================================
+
+@app.route("/")
+def home():
+    return render_template_string(HTML)
+
+
+# ==========================================
+# OPTIONS API
+# ==========================================
+
+@app.route("/api/options")
+def options():
+
+    return jsonify({
+        "departments": DEPARTMENTS,
+        "doctors": DOCTORS,
+        "genders": GENDERS,
+        "wards": WARDS
+    })
+
+
+# ==========================================
+# ADD PATIENT API
+# ==========================================
+
+@app.route("/api/patients", methods=["POST"])
+def add_patient():
+
+    data = request.get_json(silent=True) or {}
+
+    required = [
+        "name", "age", "gender", "ward",
+        "department", "doctor", "admission_date"
+    ]
+
+    if any(not str(data.get(k, "")).strip() for k in required):
+        return jsonify({"error": "All fields are required"}), 400
+
+    if data["gender"] not in GENDERS or data["ward"] not in WARDS:
+        return jsonify({"error": "Invalid gender or ward"}), 400
+
+    if data["department"] not in DEPARTMENTS or data["doctor"] not in DOCTORS:
+        return jsonify({"error": "Invalid department or doctor"}), 400
+
+    try:
+        age = int(data["age"])
+        if age < 0 or age > 120:
+            return jsonify({"error": "Invalid age"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "Age must be a number"}), 400
+
+    conn = get_db()
+
+    cursor = conn.execute("""
+    INSERT INTO patients
+    (name, age, gender, ward, department,
+     doctor, admission_date, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'Admitted')
+    """, (
+        data["name"].strip(), age, data["gender"],
+        data["ward"], data["department"],
+        data["doctor"], data["admission_date"]
+    ))
+
+    patient_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "message": "Patient added successfully!",
+        "patient_id": patient_id
+    }), 201
+
+
+# ==========================================
+# GET PATIENTS API
+# ==========================================
+
+@app.route("/api/patients", methods=["GET"])
+def get_patients():
+
+    conn = get_db()
+
+    rows = conn.execute(
+        "SELECT * FROM patients ORDER BY id DESC"
+    ).fetchall()
+
+    conn.close()
+
+    return jsonify([dict(row) for row in rows])
+
+
+# ==========================================
+# UPDATE PATIENT API
+# ==========================================
+
+@app.route("/api/patients/<int:patient_id>",
+           methods=["PUT"])
+def update_patient(patient_id):
+
+    data = request.get_json(silent=True) or {}
+
+    allowed = [
+        "name", "age", "gender", "ward",
+        "department", "doctor", "admission_date"
+    ]
+
+    updates = {
+        key: data[key]
+        for key in allowed if key in data
+    }
+
+    if not updates:
+        return jsonify({"error": "No fields to update"}), 400
+
+    if "name" in updates and not str(updates["name"]).strip():
+        return jsonify({"error": "Name cannot be empty"}), 400
+
+    if "age" in updates:
+        try:
+            updates["age"] = int(updates["age"])
+            if updates["age"] < 0 or updates["age" ] > 120:
+                raise ValueError()
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid age"}), 400
+
+    for key, allowed_values in [
+        ("gender", GENDERS),
+        ("ward", WARDS),
+        ("department", DEPARTMENTS),
+        ("doctor", DOCTORS)
+    ]:
+        if key in updates and updates[key] not in allowed_values:
+            return jsonify({"error": f"Invalid {key}"}), 400
+
+    conn = get_db()
+
+    exists = conn.execute(
+        "SELECT id FROM patients WHERE id=?",
+        (patient_id,)
+    ).fetchone()
+
+    if not exists:
+        conn.close;
+        return jsonify({"error": "Patient not found"}), 404
+
+    query = ", ".join(f"{key}=?" for key in updates)
+
+    conn.execute(
+        f"UPDATE patients SET {query} WHERE id=?",
+        list(updates.values()) + [patient_id]
+    )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "message": "Patient updated successfully!"
+    })
+
+
+# ==========================================
+# DISCHARGE API
+# ==========================================
+
+@app.route("/api/patients/<int:patient_id>/discharge",
+           methods=["PATCH"])
+def discharge_patient(patient_id):
+
+    conn = get_db()
+
+    patient = conn.execute(
+        "SELECT id, status FROM patients WHERE id=?",
+        (patient_id,)
+    ).fetchone()
+
+    if not patient:
+        conn.close()
+        return jsonify({"error": "Patient not found"}), 404
+
+    if patient["status"] == "Discharged":
+        conn.close()
+        return jsonify({"message": "Patient is already discharged"})
+
+    conn.execute(
+        "UPDATE patients SET status='Discharged' WHERE id=?",
+        (patient_id,)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "message": "Patient discharged successfully!"
+    })
+
+
+# =====================================================
+# START SERVER
+# =====================================================
+
+PORT = 5001
+
+server = make_server("0.0.0.0", PORT, app)
+
+thread = threading.Thread(
+    target=server.serve_forever,
+    daemon=True
+)
+
+thread.start()
+
+url = eval_js(
+    f"google.colab.kernel.proxyPort({PORT})"
+)
+
+print("====================================")
+print("PATIENT MANAGEMENT SYSTEM RUNNING")
+print("====================================")
+print("Open your application:")
+print(url)
+print("====================================")
+
+# Open frontend
+from IPython.display import HTML as DisplayHTML, display
+
+display(DisplayHTML(
+    f'<h3>Open Patient Management Dashboard</h3>'
+    f'<a href="{url}" target="_blank">'
+    f'<button style="padding:15px;background:#1769aa;'
+    f'color:white;border:0;border-radius:8px;'
+    f'cursor:pointer">OPEN DASHBOARD</button></a>'
+))

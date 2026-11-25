@@ -1,0 +1,334 @@
+# PATIENT ADMISSION MANAGEMENT SYSTEM
+# Python + Flask + SQLite + REST API
+# ==========================================
+
+!pip -q install flask requests
+
+import sqlite3
+import threading
+import requests
+from flask import Flask, request, jsonify
+from werkzeug.serving import make_server
+
+# ==========================================
+# 1. DATABASE SETUP
+# ==========================================
+
+DB_NAME = "patients.db"
+
+def get_db():
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+conn = get_db()
+
+conn.execute("""
+CREATE TABLE IF NOT EXISTS patients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    age INTEGER,
+    gender TEXT,
+    ward TEXT,
+    department TEXT,
+    doctor TEXT,
+    admission_date TEXT,
+    status TEXT DEFAULT 'Admitted'
+)
+""")
+
+conn.commit()
+conn.close()
+
+print("Patient database created successfully!")
+
+# ==========================================
+# 2. FLASK APPLICATION
+# ==========================================
+
+app = Flask(__name__)
+
+DEPARTMENTS = [
+    "Cardiology", "Neurology", "Orthopedics",
+    "Pediatrics", "General Medicine"
+]
+
+DOCTORS = ["Dr. Ahmed", "Dr. John", "Dr. Sarah"]
+
+GENDERS = ["Male", "Female", "Other"]
+
+WARDS = ["General Ward", "ICU", "Private Ward"]
+
+
+# ==========================================
+# 3. OPTIONS API
+# ==========================================
+
+@app.route("/api/options", methods=["GET"])
+def get_options():
+    return jsonify({
+        "departments": DEPARTMENTS,
+        "doctors": DOCTORS,
+        "genders": GENDERS,
+        "wards": WARDS
+    })
+
+
+# ==========================================
+# 4. ADD PATIENT API
+# ==========================================
+
+@app.route("/api/patients", methods=["POST"])
+def add_patient():
+
+    data = request.get_json()
+
+    required = ["name", "age", "gender", "ward",
+                "department", "doctor", "admission_date"]
+
+    if not data or any(key not in data for key in required):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    conn = get_db()
+
+    cursor = conn.execute("""
+    INSERT INTO patients
+    (name, age, gender, ward, department,
+     doctor, admission_date, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        data["name"],
+        data["age"],
+        data["gender"],
+        data["ward"],
+        data["department"],
+        data["doctor"],
+        data["admission_date"],
+        "Admitted"
+    ))
+
+    patient_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "message": "Patient added successfully!",
+        "patient_id": patient_id
+    }), 201
+
+
+# ==========================================
+# 5. VIEW ALL PATIENTS API
+# ==========================================
+
+@app.route("/api/patients", methods=["GET"])
+def get_patients():
+
+    conn = get_db()
+
+    patients = conn.execute(
+        "SELECT * FROM patients ORDER BY id DESC"
+    ).fetchall()
+
+    conn.close()
+
+    return jsonify([dict(p) for p in patients])
+
+
+# ==========================================
+# 6. UPDATE PATIENT API
+# ==========================================
+
+@app.route("/api/patients/<int:patient_id>",
+           methods=["PUT"])
+def update_patient(patient_id):
+
+    data = request.get_json()
+
+    allowed = [
+        "name", "age", "gender", "ward",
+        "department", "doctor", "admission_date"
+    ]
+
+    if not data or not any(k in data for k in allowed):
+        return jsonify({"error": "No valid fields provided"}), 400
+
+    updates = {k: v for k, v in data.items() if k in allowed}
+
+    conn = get_db()
+
+    patient = conn.execute(
+        "SELECT id FROM patients WHERE id=?",
+        (patient_id,)
+    ).fetchone()
+
+    if not patient:
+        conn.close()
+        return jsonify({"error": "Patient not found"}), 404
+
+    query = ", ".join(f"{key}=?" for key in updates)
+
+    conn.execute(
+        f"UPDATE patients SET {query} WHERE id=?",
+        list(updates.values()) + [patient_id]
+    )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "message": "Patient updated successfully!"
+    })
+
+
+# ==========================================
+# 7. DISCHARGE PATIENT API
+# ==========================================
+
+@app.route("/api/patients/<int:patient_id>/discharge",
+           methods=["PATCH"])
+def discharge_patient(patient_id):
+
+    conn = get_db()
+
+    patient = conn.execute(
+        "SELECT id FROM patients WHERE id=?",
+        (patient_id,)
+    ).fetchone()
+
+    if not patient:
+        conn.close()
+        return jsonify({"error": "Patient not found"}), 404
+
+    conn.execute("""
+    UPDATE patients
+    SET status='Discharged'
+    WHERE id=?
+    """, (patient_id,))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "message": "Patient discharged successfully!"
+    })
+
+
+# ==========================================
+# 8. START FLASK SERVER
+# ==========================================
+
+PORT = 5001
+
+server = make_server("0.0.0.0", PORT, app)
+
+thread = threading.Thread(
+    target=server.serve_forever,
+    daemon=True
+)
+
+thread.start()
+
+# ==========================================
+# 9. GET APPLICATION URL
+# ==========================================
+
+from google.colab.output import eval_js
+
+url = eval_js(
+    f"google.colab.kernel.proxyPort({PORT})"
+)
+
+local_url = f"http://127.0.0.1:{PORT}"
+
+print("\n================================")
+print("PATIENT MANAGEMENT API RUNNING")
+print("================================")
+
+print("Application URL:", url)
+print("Patients API:", url + "/api/patients")
+print("Options API:", url + "/api/options")
+
+
+# ==========================================
+# 10. TEST ADD PATIENT
+# ==========================================
+
+patient = {
+    "name": "Rahul Sharma",
+    "age": 25,
+    "gender": "Male",
+    "ward": "General Ward",
+    "department": "Cardiology",
+    "doctor": "Dr. Ahmed",
+    "admission_date": "2026-11-25"
+}
+
+response = requests.post(
+    local_url + "/api/patients",
+    json=patient
+)
+
+print("\nADD PATIENT")
+print("Status Code:", response.status_code)
+print("Response:", response.json())
+
+
+# ==========================================
+# 11. TEST VIEW PATIENTS
+# ==========================================
+
+response = requests.get(
+    local_url + "/api/patients"
+)
+
+print("\nALL PATIENTS")
+print(response.json())
+
+
+# ==========================================
+# 12. TEST UPDATE PATIENT
+# ==========================================
+
+patient_id = 1
+
+updated_patient = {
+    "ward": "ICU"
+}
+
+response = requests.put(
+    f"{local_url}/api/patients/{patient_id}",
+    json=updated_patient
+)
+
+print("\nUPDATE PATIENT")
+print("Status Code:", response.status_code)
+print("Response:", response.json())
+
+
+# ==========================================
+# 13. TEST DISCHARGE PATIENT
+# ==========================================
+
+response = requests.patch(
+    f"{local_url}/api/patients/{patient_id}/discharge"
+)
+
+print("\nDISCHARGE PATIENT")
+print("Status Code:", response.status_code)
+print("Response:", response.json())
+
+
+# ==========================================
+# 14. FINAL PATIENT DATABASE
+# ==========================================
+
+response = requests.get(
+    local_url + "/api/patients"
+)
+
+print("\nFINAL PATIENT RECORDS")
+
+for patient in response.json():
+    print(patient)
